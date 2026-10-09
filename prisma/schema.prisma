@@ -1,0 +1,119 @@
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+enum DeliveryStatus {
+  DISPATCHED
+  DELIVERED
+  DISCREPANCY
+  CANCELLED
+}
+
+// 1. Products Master Catalog
+model Product {
+  id            String         @id @default(uuid())
+  productCode   String         @unique @map("product_code")
+  productName   String         @map("product_name")
+  category      String?
+  unit          String         @default("Units")
+  isActive      Boolean        @default(true) @map("is_active")
+  createdAt     DateTime       @default(now()) @map("created_at")
+
+  deliveryItems DeliveryItem[]
+
+  @@map("products")
+}
+
+// 2. Registered Delivery Drivers / Personnel
+model Driver {
+  id            String     @id @default(uuid())
+  name          String     @map("name")
+  phone         String     @map("phone")
+  vehicleNumber String?    @map("vehicle_number")
+  nic           String?    @map("nic")
+  isActive      Boolean    @default(true) @map("is_active")
+  createdAt     DateTime   @default(now()) @map("created_at")
+
+  deliveries    Delivery[]
+
+  @@map("drivers")
+}
+
+// 3. Registered Modern Trade / Retail Outlets / Customers
+model Customer {
+  id        String     @id @default(uuid())
+  name      String     @map("name")
+  phone     String?    @map("phone")
+  address   String?    @map("address")
+  isActive  Boolean    @default(true) @map("is_active")
+  createdAt DateTime   @default(now()) @map("created_at")
+
+  deliveries Delivery[]
+
+  @@map("customers")
+}
+
+// 4. Deliveries Master
+model Delivery {
+  id              String         @id @default(uuid())
+  invoiceNumber   String         @unique @map("invoice_number")
+  jobNumber       String         @map("job_number")
+  customerName    String         @map("customer_name")
+  customerPhone   String?        @map("customer_phone")
+  outletAddress   String?        @map("outlet_address")
+  customerId      String?        @map("customer_id")
+  driverId        String?        @map("driver_id")
+  driverName      String?        @map("driver_name")
+  status          DeliveryStatus @default(DISPATCHED)
+  dispatchedAt    DateTime       @default(now()) @map("dispatched_at")
+  deliveredAt     DateTime?      @map("delivered_at")
+  createdBy       String?        @map("created_by")
+
+  customer        Customer?      @relation(fields: [customerId], references: [id])
+  driver          Driver?        @relation(fields: [driverId], references: [id])
+  items           DeliveryItem[]
+  acknowledgement DeliveryAcknowledgement?
+
+  @@index([invoiceNumber])
+  @@index([status])
+  @@map("deliveries")
+}
+
+// 5. Line Items
+model DeliveryItem {
+  id                 String    @id @default(uuid())
+  deliveryId         String    @map("delivery_id")
+  productId          String?   @map("product_id")
+  productName        String    @map("product_name")
+  orderedQty         Int       @map("ordered_qty")
+  receivedQty        Int?      @map("received_qty")
+  shortageQty        Int       @default(0) @map("shortage_qty")
+  damageQty          Int       @default(0) @map("damage_qty")
+  discrepancyReason  String?   @map("discrepancy_reason")
+
+  delivery           Delivery  @relation(fields: [deliveryId], references: [id], onDelete: Cascade)
+  product            Product?  @relation(fields: [productId], references: [id])
+
+  @@map("delivery_items")
+}
+
+// 6. Acknowledgement / e-Signature
+model DeliveryAcknowledgement {
+  id                String    @id @default(uuid())
+  deliveryId        String    @unique @map("delivery_id")
+  receiverName      String    @map("receiver_name")
+  receiverNic       String    @map("receiver_nic")
+  signatureDataUrl  String    @db.Text @map("signature_data_url")
+  remarks           String?
+  acknowledgedAt    DateTime  @default(now()) @map("acknowledged_at")
+  ipAddress         String?   @map("ip_address")
+
+  delivery          Delivery  @relation(fields: [deliveryId], references: [id], onDelete: Cascade)
+
+  @@map("delivery_acknowledgements")
+}
