@@ -11,8 +11,8 @@ export async function GET(req: NextRequest) {
       where: {
         isActive: true,
         OR: [
-          { productName: { contains: query, mode: 'insensitive' } },
-          { productCode: { contains: query, mode: 'insensitive' } },
+          { productName: { contains: query } },
+          { productCode: { contains: query } },
         ],
       },
       take: 100,
@@ -21,11 +21,11 @@ export async function GET(req: NextRequest) {
 
     return NextResponse.json(products);
   } catch (error) {
+    console.error('Products GET Error:', error);
     return NextResponse.json({ error: 'Failed to retrieve products.' }, { status: 500 });
   }
 }
 
-// DELETE PRODUCT SAFELY
 export async function DELETE(req: NextRequest) {
   try {
     const { searchParams } = new URL(req.url);
@@ -35,7 +35,6 @@ export async function DELETE(req: NextRequest) {
       return NextResponse.json({ error: 'Product ID is required.' }, { status: 400 });
     }
 
-    // Disconnect foreign key references first to avoid database constraint errors
     await db.deliveryItem.updateMany({
       where: { productId: id },
       data: { productId: null },
@@ -47,7 +46,6 @@ export async function DELETE(req: NextRequest) {
 
     return NextResponse.json({ success: true, message: 'Product deleted successfully.' });
   } catch (error) {
-    console.error('Delete Product Error:', error);
     return NextResponse.json({ error: 'Failed to delete product.' }, { status: 500 });
   }
 }

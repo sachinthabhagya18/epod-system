@@ -1,6 +1,7 @@
 // app/api/pod/[id]/route.ts
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
+import { sendSmsNotification } from '@/lib/sms';
 
 export async function GET(
   req: NextRequest,
@@ -13,19 +14,17 @@ export async function GET(
       where: { id },
       include: {
         items: true,
-        driver: true,
-        acknowledgement: true,
+        dispatchRun: true,
       },
     });
 
     if (!delivery) {
-      return NextResponse.json({ error: 'Delivery order not found.' }, { status: 404 });
+      return NextResponse.json({ error: 'Delivery record not found.' }, { status: 404 });
     }
 
     return NextResponse.json(delivery);
   } catch (error) {
-    console.error('Fetch POD Error:', error);
-    return NextResponse.json({ error: 'Failed to fetch delivery details.' }, { status: 500 });
+    return NextResponse.json({ error: 'Failed to load delivery.' }, { status: 500 });
   }
 }
 
@@ -36,89 +35,129 @@ export async function POST(
   try {
     const { id } = await context.params;
     const body = await req.json();
-    const { receiverName, receiverNic, signatureDataUrl, items, remarks } = body;
+    const { signedInvoicePhotoUrl, receiverName, receiverNic, remarks, items } = body;
 
-    if (!receiverName || !receiverNic || !signatureDataUrl) {
+    if (!signedInvoicePhotoUrl) {
       return NextResponse.json(
-        { error: 'Receiver Name, NIC number, and Touch Signature are mandatory.' },
+        { error: 'Please capture and upload a photo of the signed Tax Invoice.' },
         { status: 400 }
       );
     }
 
-    const delivery = await db.delivery.findUnique({
+    const existing = await db.delivery.findUnique({
       where: { id },
-      include: { acknowledgement: true },
+      include: { dispatchRun: true },
     });
 
-    if (!delivery) {
+    if (!existing) {
       return NextResponse.json({ error: 'Delivery order not found.' }, { status: 404 });
     }
 
-    if (delivery.acknowledgement) {
-      return NextResponse.json(
-        { error: 'This delivery has already been acknowledged and closed.' },
-        { status: 400 }
-      );
-    }
-
+    // Check if any item has shortage or damage
     let hasDiscrepancy = false;
-    if (Array.isArray(items)) {
-      for (const item of items) {
-        if (Number(item.shortageQty) > 0 || Number(item.damageQty) > 0) {
-          hasDiscrepancy = true;
-          break;
-        }
+    const validItems = Array.isArray(items)
+      ? items.filter((i: any) => String(i.productName || '').trim() !== '')
+      : [];
+
+    for (const item of validItems) {
+      const ordered = Number(item.orderedQty) || 0;
+      const received = Number(item.receivedQty ?? ordered);
+      const shortage = Number(item.shortageQty) || Math.max(0, ordered - received);
+      const damage = Number(item.damageQty) || 0;
+      if (shortage > 0 || damage > 0 || !item.isFullComplete) {
+        hasDiscrepancy = true;
       }
     }
 
     const finalStatus = hasDiscrepancy ? 'DISCREPANCY' : 'DELIVERED';
 
-    const updated = await db.$transaction(async (tx) => {
-      if (Array.isArray(items)) {
-        for (const item of items) {
-          await tx.deliveryItem.update({
-            where: { id: item.id },
-            data: {
-              receivedQty: Number(item.receivedQty),
-              shortageQty: Number(item.shortageQty) || 0,
-              damageQty: Number(item.damageQty) || 0,
-              discrepancyReason: item.discrepancyReason || null,
-            },
-          });
-        }
-      }
+    // 1. Auto-Sync scanned products into the Master Product Catalog table
+    for (let idx = 0; idx < validItems.length; idx++) {
+      const item = validItems[idx];
+      const rawCode = String(item.productCode || '').trim().toUpperCase();
+      const rawName = String(item.productName || '').trim();
+      const generatedCode = rawCode || `ITEM-${rawName.substring(0, 8).toUpperCase().replace(/\s+/g, '')}`;
 
-      await tx.deliveryAcknowledgement.create({
-        data: {
-          deliveryId: id,
-          receiverName: receiverName.trim(),
-          receiverNic: receiverNic.trim().toUpperCase(),
-          signatureDataUrl,
-          remarks: remarks ? remarks.trim() : null,
-          ipAddress: req.headers.get('x-forwarded-for') || null,
+      await db.product.upsert({
+        where: { productCode: generatedCode },
+        update: { productName: rawName, isActive: true },
+        create: {
+          productCode: generatedCode,
+          productName: rawName,
+          category: 'Invoice Scanned',
+          unit: 'Units',
         },
       });
+    }
 
-      const finalizedDelivery = await tx.delivery.update({
+    // 2. Save Delivery Confirmation and Replace Delivery Items in a Transaction
+    const updated = await db.$transaction(async (tx) => {
+      await tx.deliveryItem.deleteMany({ where: { deliveryId: id } });
+
+      const deliv = await tx.delivery.update({
         where: { id },
         data: {
+          signedInvoicePhotoUrl,
+          receiverName: receiverName ? receiverName.trim() : 'Outlet Representative',
+          receiverNic: receiverNic ? receiverNic.trim().toUpperCase() : null,
+          remarks: remarks ? remarks.trim() : null,
           status: finalStatus,
           deliveredAt: new Date(),
+          items: {
+            create: validItems.map((item: any) => {
+              const ordered = Number(item.orderedQty) || 0;
+              const received = item.isFullComplete
+                ? ordered
+                : Number(item.receivedQty ?? ordered);
+              const shortage = item.isFullComplete
+                ? 0
+                : Math.max(0, ordered - received);
+              const damage = item.isFullComplete ? 0 : Number(item.damageQty) || 0;
+
+              return {
+                productCode: item.productCode ? String(item.productCode).trim().toUpperCase() : null,
+                productName: String(item.productName).trim(),
+                orderedQty: ordered,
+                receivedQty: received,
+                shortageQty: shortage,
+                damageQty: damage,
+                discrepancyReason: item.discrepancyReason ? String(item.discrepancyReason).trim() : null,
+              };
+            }),
+          },
         },
+        include: { items: true },
       });
 
-      return finalizedDelivery;
+      return deliv;
     });
+
+    // 3. Send SMS Alert to Admin & Outlet
+    const adminPhone = process.env.ADMIN_ALERT_PHONE;
+    const statusLabel = hasDiscrepancy ? 'WITH SHORTAGE/DAMAGE' : 'FULL COMPLETE';
+    const smsText = `e-POD Alert: Invoice ${existing.invoiceNumber} (${existing.customerName}) delivered [${statusLabel}] by ${
+      existing.dispatchRun?.driverName || 'Driver'
+    }. Items recorded: ${validItems.length}.`;
+
+    if (adminPhone) {
+      await sendSmsNotification({ to: adminPhone, message: smsText });
+    }
+    if (existing.customerPhone) {
+      await sendSmsNotification({
+        to: existing.customerPhone,
+        message: `George Steuart Delivery Confirmed: Invoice ${existing.invoiceNumber} (${validItems.length} items - ${statusLabel}) received at ${existing.customerName}.`,
+      });
+    }
 
     return NextResponse.json({
       success: true,
-      message: 'Delivery acknowledgement recorded successfully.',
+      message: 'Signed invoice & product quantities saved successfully.',
       delivery: updated,
     });
   } catch (error: any) {
     console.error('Submit POD Error:', error);
     return NextResponse.json(
-      { error: error.message || 'Failed to submit delivery acknowledgement.' },
+      { error: error.message || 'Failed to submit delivery confirmation.' },
       { status: 500 }
     );
   }

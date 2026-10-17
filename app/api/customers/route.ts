@@ -10,7 +10,7 @@ export async function GET(req: NextRequest) {
     const customers = await db.customer.findMany({
       where: {
         isActive: true,
-        name: { contains: query, mode: 'insensitive' },
+        name: { contains: query },
       },
       take: 100,
       orderBy: { name: 'asc' },
@@ -18,6 +18,7 @@ export async function GET(req: NextRequest) {
 
     return NextResponse.json(customers);
   } catch (error) {
+    console.error('Customers GET Error:', error);
     return NextResponse.json({ error: 'Failed to search outlets.' }, { status: 500 });
   }
 }
@@ -43,7 +44,6 @@ export async function POST(req: NextRequest) {
   }
 }
 
-// DELETE OUTLET SAFELY
 export async function DELETE(req: NextRequest) {
   try {
     const { searchParams } = new URL(req.url);
@@ -53,19 +53,12 @@ export async function DELETE(req: NextRequest) {
       return NextResponse.json({ error: 'Outlet ID is required.' }, { status: 400 });
     }
 
-    // Disconnect from past deliveries before deletion
-    await db.delivery.updateMany({
-      where: { customerId: id },
-      data: { customerId: null },
-    });
-
     await db.customer.delete({
       where: { id },
     });
 
     return NextResponse.json({ success: true, message: 'Outlet deleted successfully.' });
   } catch (error) {
-    console.error('Delete Outlet Error:', error);
     return NextResponse.json({ error: 'Failed to delete outlet.' }, { status: 500 });
   }
 }

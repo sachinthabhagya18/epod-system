@@ -1,5 +1,5 @@
 datasource db {
-  provider = "postgresql"
+  provider = "mysql"
   url      = env("DATABASE_URL")
 }
 
@@ -8,88 +8,65 @@ generator client {
 }
 
 enum DeliveryStatus {
+  PENDING
   DISPATCHED
   DELIVERED
   DISCREPANCY
   CANCELLED
 }
 
-// 1. Products Master Catalog
-model Product {
-  id            String         @id @default(uuid())
-  productCode   String         @unique @map("product_code")
-  productName   String         @map("product_name")
-  category      String?
-  unit          String         @default("Units")
-  isActive      Boolean        @default(true) @map("is_active")
-  createdAt     DateTime       @default(now()) @map("created_at")
+// 1. Delivery Vehicle Acknowledgment (Daily Dispatch Run / Batch)
+model DispatchRun {
+  id              String       @id @default(uuid())
+  runNumber       String       @unique @map("run_number") // e.g. RUN-20261013-01
+  deliveryDate    DateTime     @map("delivery_date")
+  vehicleNumber   String       @map("vehicle_number")     // PJ-4141
+  driverName      String       @map("driver_name")        // DHANUSHKA
+  driverPhone     String?      @map("driver_phone")
+  routeName       String?      @map("route_name")         // KATUBEDDA TO KALUTARA
+  meterStart      String?      @map("meter_start")
+  meterEnd        String?      @map("meter_end")
+  status          String       @default("ACTIVE")         // ACTIVE, COMPLETED
+  createdAt       DateTime     @default(now()) @map("created_at")
 
-  deliveryItems DeliveryItem[]
+  deliveries      Delivery[]
 
-  @@map("products")
+  @@map("dispatch_runs")
 }
 
-// 2. Registered Delivery Drivers / Personnel
-model Driver {
-  id            String     @id @default(uuid())
-  name          String     @map("name")
-  phone         String     @map("phone")
-  vehicleNumber String?    @map("vehicle_number")
-  nic           String?    @map("nic")
-  isActive      Boolean    @default(true) @map("is_active")
-  createdAt     DateTime   @default(now()) @map("created_at")
-
-  deliveries    Delivery[]
-
-  @@map("drivers")
-}
-
-// 3. Registered Modern Trade / Retail Outlets / Customers
-model Customer {
-  id        String     @id @default(uuid())
-  name      String     @map("name")
-  phone     String?    @map("phone")
-  address   String?    @map("address")
-  isActive  Boolean    @default(true) @map("is_active")
-  createdAt DateTime   @default(now()) @map("created_at")
-
-  deliveries Delivery[]
-
-  @@map("customers")
-}
-
-// 4. Deliveries Master
+// 2. Individual Outlet Deliveries (Manifest Table Rows 1 - 16)
 model Delivery {
-  id              String         @id @default(uuid())
-  invoiceNumber   String         @unique @map("invoice_number")
-  jobNumber       String         @map("job_number")
-  customerName    String         @map("customer_name")
-  customerPhone   String?        @map("customer_phone")
-  outletAddress   String?        @map("outlet_address")
-  customerId      String?        @map("customer_id")
-  driverId        String?        @map("driver_id")
-  driverName      String?        @map("driver_name")
-  status          DeliveryStatus @default(DISPATCHED)
-  dispatchedAt    DateTime       @default(now()) @map("dispatched_at")
-  deliveredAt     DateTime?      @map("delivered_at")
-  createdBy       String?        @map("created_by")
+  id                    String         @id @default(uuid())
+  dispatchRunId         String?        @map("dispatch_run_id")
+  stopOrder             Int            @default(1) @map("stop_order") // Route order 1, 2, 3...
+  invoiceNumber         String         @unique @map("invoice_number") // 26OCT_GSC_131896
+  customerName          String         @map("customer_name")          // SANIKMO SUPER
+  customerPhone         String?        @map("customer_phone")
+  outletAddress         String?        @map("outlet_address")
+  status                DeliveryStatus @default(DISPATCHED)
+  dispatchedAt          DateTime       @default(now()) @map("dispatched_at")
+  deliveredAt           DateTime?      @map("delivered_at")
 
-  customer        Customer?      @relation(fields: [customerId], references: [id])
-  driver          Driver?        @relation(fields: [driverId], references: [id])
-  items           DeliveryItem[]
-  acknowledgement DeliveryAcknowledgement?
+  // Signed Tax Invoice Camera Photo Proof (Document 2)
+  signedInvoicePhotoUrl String?        @db.LongText @map("signed_invoice_photo_url")
+  receiverName          String?        @map("receiver_name")
+  receiverNic           String?        @map("receiver_nic")
+  remarks               String?        @map("remarks")
+
+  dispatchRun           DispatchRun?   @relation(fields: [dispatchRunId], references: [id], onDelete: Cascade)
+  items                 DeliveryItem[]
 
   @@index([invoiceNumber])
   @@index([status])
   @@map("deliveries")
 }
 
-// 5. Line Items
+// 3. Products on Invoice
 model DeliveryItem {
   id                 String    @id @default(uuid())
   deliveryId         String    @map("delivery_id")
-  productId          String?   @map("product_id")
-  productName        String    @map("product_name")
+  productCode        String?   @map("product_code") // PK1206_RS2800
+  productName        String    @map("product_name") // LS - STEUARTS BOPF PACK 1KG
   orderedQty         Int       @map("ordered_qty")
   receivedQty        Int?      @map("received_qty")
   shortageQty        Int       @default(0) @map("shortage_qty")
@@ -97,23 +74,44 @@ model DeliveryItem {
   discrepancyReason  String?   @map("discrepancy_reason")
 
   delivery           Delivery  @relation(fields: [deliveryId], references: [id], onDelete: Cascade)
-  product            Product?  @relation(fields: [productId], references: [id])
 
   @@map("delivery_items")
 }
 
-// 6. Acknowledgement / e-Signature
-model DeliveryAcknowledgement {
-  id                String    @id @default(uuid())
-  deliveryId        String    @unique @map("delivery_id")
-  receiverName      String    @map("receiver_name")
-  receiverNic       String    @map("receiver_nic")
-  signatureDataUrl  String    @db.Text @map("signature_data_url")
-  remarks           String?
-  acknowledgedAt    DateTime  @default(now()) @map("acknowledged_at")
-  ipAddress         String?   @map("ip_address")
+// 4. Products Master Catalog
+model Product {
+  id            String   @id @default(uuid())
+  productCode   String   @unique @map("product_code")
+  productName   String   @map("product_name")
+  category      String?
+  unit          String   @default("Units")
+  isActive      Boolean  @default(true) @map("is_active")
+  createdAt     DateTime @default(now()) @map("created_at")
 
-  delivery          Delivery  @relation(fields: [deliveryId], references: [id], onDelete: Cascade)
+  @@map("products")
+}
 
-  @@map("delivery_acknowledgements")
+// 5. Drivers Master
+model Driver {
+  id            String   @id @default(uuid())
+  name          String
+  phone         String
+  vehicleNumber String?  @map("vehicle_number")
+  nic           String?
+  isActive      Boolean  @default(true) @map("is_active")
+  createdAt     DateTime @default(now()) @map("created_at")
+
+  @@map("drivers")
+}
+
+// 6. Customers Master
+model Customer {
+  id        String   @id @default(uuid())
+  name      String
+  phone     String?
+  address   String?
+  isActive  Boolean  @default(true) @map("is_active")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@map("customers")
 }

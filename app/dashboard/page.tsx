@@ -7,54 +7,68 @@ import {
   Truck,
   Plus,
   Package,
-  Search,
   CheckCircle2,
   Clock,
   AlertTriangle,
   Copy,
   ExternalLink,
-  FileText,
   RefreshCw,
   Trash2,
   UserCheck,
   Store,
+  Sparkles,
+  Eye,
+  X,
 } from 'lucide-react';
+
+interface DeliveryItem {
+  id: string;
+  productCode: string | null;
+  productName: string;
+  orderedQty: number;
+  receivedQty: number | null;
+  shortageQty: number;
+  damageQty: number;
+  discrepancyReason: string | null;
+}
 
 interface Delivery {
   id: string;
+  stopOrder: number;
   invoiceNumber: string;
-  jobNumber: string;
   customerName: string;
   customerPhone: string | null;
-  status: 'DISPATCHED' | 'DELIVERED' | 'DISCREPANCY' | 'CANCELLED';
+  status: 'PENDING' | 'DISPATCHED' | 'DELIVERED' | 'DISCREPANCY' | 'CANCELLED';
   dispatchedAt: string;
   deliveredAt: string | null;
-  driverName: string | null;
-  items: { id: string; productName: string; orderedQty: number }[];
-  acknowledgement: {
-    receiverName: string;
-    receiverNic: string;
-    acknowledgedAt: string;
-  } | null;
+  signedInvoicePhotoUrl: string | null;
+  receiverName: string | null;
+  remarks: string | null;
+  items: DeliveryItem[];
+}
+
+interface DispatchRun {
+  id: string;
+  runNumber: string;
+  deliveryDate: string;
+  vehicleNumber: string;
+  driverName: string;
+  routeName: string | null;
+  deliveries: Delivery[];
 }
 
 export default function DashboardPage() {
-  const [deliveries, setDeliveries] = useState<Delivery[]>([]);
-  const [search, setSearch] = useState('');
-  const [statusFilter, setStatusFilter] = useState('');
+  const [runs, setRuns] = useState<DispatchRun[]>([]);
   const [loading, setLoading] = useState(true);
   const [copiedId, setCopiedId] = useState<string | null>(null);
+  const [previewInvoice, setPreviewInvoice] = useState<Delivery | null>(null);
 
-  const fetchDeliveries = async () => {
+  const fetchRuns = async () => {
     try {
       setLoading(true);
-      const params = new URLSearchParams();
-      if (search) params.append('search', search);
-      if (statusFilter) params.append('status', statusFilter);
-
-      const res = await fetch(`/api/deliveries?${params.toString()}`);
+      const res = await fetch('/api/runs');
       const data = await res.json();
-      if (Array.isArray(data)) setDeliveries(data);
+      if (Array.isArray(data)) setRuns(data);
     } catch (err) {
       console.error(err);
     } finally {
@@ -63,261 +77,345 @@ export default function DashboardPage() {
   };
 
   useEffect(() => {
-    fetchDeliveries();
-  }, [statusFilter]);
+    fetchRuns();
+  }, []);
 
-  const handleSearch = (e: React.FormEvent) => {
-    e.preventDefault();
-    fetchDeliveries();
-  };
-
-  const copyDriverLink = (id: string) => {
-    const url = `${window.location.origin}/pod/${id}`;
+  const copyDriverRunLink = (runId: string) => {
+    const url = `${window.location.origin}/driver/${runId}`;
     navigator.clipboard.writeText(url);
-    setCopiedId(id);
+    setCopiedId(runId);
     setTimeout(() => setCopiedId(null), 2000);
   };
 
-  const handleDeleteDelivery = async (id: string, invoiceNumber: string) => {
-    if (!window.confirm(`Are you sure you want to permanently delete delivery ${invoiceNumber}? This action cannot be undone.`)) {
-      return;
-    }
-
-    try {
-      const res = await fetch(`/api/deliveries?id=${id}`, { method: 'DELETE' });
-      if (res.ok) {
-        setDeliveries((prev) => prev.filter((d) => d.id !== id));
-      } else {
-        alert('Failed to delete delivery order.');
-      }
-    } catch (err) {
-      alert('Error connecting to the server.');
-    }
+  const handleDeleteRun = async (id: string, vehicle: string) => {
+    if (!window.confirm(`Delete dispatch sheet for vehicle ${vehicle}?`)) return;
+    await fetch(`/api/runs?id=${id}`, { method: 'DELETE' });
+    fetchRuns();
   };
 
-  const totalDispatches = deliveries.length;
-  const totalDelivered = deliveries.filter((d) => d.status === 'DELIVERED').length;
-  const totalDiscrepancies = deliveries.filter((d) => d.status === 'DISCREPANCY').length;
-  const totalInTransit = deliveries.filter((d) => d.status === 'DISPATCHED').length;
+  const allDeliveries = runs.flatMap((r) => r.deliveries);
+  const totalStops = allDeliveries.length;
+  const completedStops = allDeliveries.filter((d) => d.status === 'DELIVERED').length;
+  const discrepancyStops = allDeliveries.filter((d) => d.status === 'DISCREPANCY').length;
+  const pendingStops = allDeliveries.filter((d) => d.status === 'DISPATCHED' || d.status === 'PENDING').length;
 
   return (
     <div className="min-h-screen bg-slate-50 text-slate-900 p-4 md:p-8">
       <div className="max-w-7xl mx-auto space-y-6">
-        {/* Top Header with Navigation */}
+        {/* Top Header */}
         <div className="flex flex-col lg:flex-row justify-between items-start lg:items-center gap-4 bg-white p-5 rounded-2xl shadow-sm border border-slate-200">
           <div>
             <h1 className="text-xl font-bold text-slate-900 flex items-center gap-2">
-              <Truck className="w-6 h-6 text-teal-600" /> Electronic Delivery Activity System (e-POD)
+              <Truck className="w-6 h-6 text-teal-600" /> George Steuart e-POD & Fleet Portal
             </h1>
-            <p className="text-xs text-slate-500 mt-0.5">Central Logistics & Dispatch Management Portal</p>
+            <p className="text-xs text-slate-500 mt-0.5">
+              AI Sheet & Tax Invoice Scanner, Product Discrepancy Tracking & Auto-Synced Master Data
+            </p>
           </div>
 
           <div className="flex flex-wrap items-center gap-2">
             <Link
               href="/products"
-              className="px-3 py-2 border border-slate-200 text-slate-700 rounded-lg text-xs font-medium hover:bg-slate-50 transition flex items-center gap-1.5"
+              className="px-3 py-2 border border-slate-200 text-slate-700 rounded-lg text-xs font-medium hover:bg-slate-50 flex items-center gap-1.5"
             >
-              <Package className="w-4 h-4 text-teal-600" /> Products
+              <Package className="w-4 h-4 text-teal-600" /> Scanned Products
             </Link>
             <Link
               href="/drivers"
-              className="px-3 py-2 border border-slate-200 text-slate-700 rounded-lg text-xs font-medium hover:bg-slate-50 transition flex items-center gap-1.5"
+              className="px-3 py-2 border border-slate-200 text-slate-700 rounded-lg text-xs font-medium hover:bg-slate-50 flex items-center gap-1.5"
             >
               <UserCheck className="w-4 h-4 text-teal-600" /> Drivers
             </Link>
             <Link
               href="/customers"
-              className="px-3 py-2 border border-slate-200 text-slate-700 rounded-lg text-xs font-medium hover:bg-slate-50 transition flex items-center gap-1.5"
+              className="px-3 py-2 border border-slate-200 text-slate-700 rounded-lg text-xs font-medium hover:bg-slate-50 flex items-center gap-1.5"
             >
               <Store className="w-4 h-4 text-teal-600" /> Outlets
             </Link>
             <Link
-              href="/deliveries/new"
-              className="px-4 py-2 bg-teal-600 text-white rounded-lg text-xs font-semibold hover:bg-teal-700 transition flex items-center gap-1.5 shadow-sm"
+              href="/runs/new"
+              className="px-4 py-2 bg-teal-600 text-white rounded-lg text-xs font-bold hover:bg-teal-700 transition flex items-center gap-1.5 shadow-sm"
             >
-              <Plus className="w-4 h-4" /> New Dispatch
+              <Sparkles className="w-4 h-4" /> Scan Vehicle Sheet
             </Link>
           </div>
         </div>
 
-        {/* Metrics Grid */}
+        {/* Summary KPI Cards */}
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
           <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm">
-            <p className="text-xs font-medium text-slate-500">Total Orders</p>
-            <p className="text-2xl font-bold text-slate-900 mt-1">{totalDispatches}</p>
+            <p className="text-xs font-medium text-slate-500">Total Outlet Stops</p>
+            <p className="text-2xl font-bold text-slate-900 mt-1">{totalStops}</p>
           </div>
           <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm">
             <p className="text-xs font-medium text-amber-600 flex items-center gap-1">
-              <Clock className="w-3.5 h-3.5" /> In Transit
+              <Clock className="w-3.5 h-3.5" /> Pending / In Transit
             </p>
-            <p className="text-2xl font-bold text-slate-900 mt-1">{totalInTransit}</p>
+            <p className="text-2xl font-bold text-slate-900 mt-1">{pendingStops}</p>
           </div>
           <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm">
             <p className="text-xs font-medium text-emerald-600 flex items-center gap-1">
-              <CheckCircle2 className="w-3.5 h-3.5" /> Completed
+              <CheckCircle2 className="w-3.5 h-3.5" /> Full Complete
             </p>
-            <p className="text-2xl font-bold text-slate-900 mt-1">{totalDelivered}</p>
+            <p className="text-2xl font-bold text-slate-900 mt-1">{completedStops}</p>
           </div>
           <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm">
             <p className="text-xs font-medium text-rose-600 flex items-center gap-1">
-              <AlertTriangle className="w-3.5 h-3.5" /> Discrepancies
+              <AlertTriangle className="w-3.5 h-3.5" /> Shortage / Damage
             </p>
-            <p className="text-2xl font-bold text-slate-900 mt-1">{totalDiscrepancies}</p>
+            <p className="text-2xl font-bold text-slate-900 mt-1">{discrepancyStops}</p>
           </div>
         </div>
 
-        {/* Deliveries Filter & Table */}
-        <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
-          <div className="p-4 border-b border-slate-100 flex flex-col sm:flex-row justify-between items-center gap-3">
-            <form onSubmit={handleSearch} className="relative w-full sm:w-80">
-              <Search className="w-4 h-4 absolute left-3 top-2.5 text-slate-400" />
-              <input
-                type="text"
-                placeholder="Search Invoice, Job, Outlet, Driver..."
-                value={search}
-                onChange={(e) => setSearch(e.target.value)}
-                className="w-full pl-9 pr-3 py-1.5 border border-slate-200 rounded-lg text-xs focus:ring-2 focus:ring-teal-500 focus:outline-none"
-              />
-            </form>
+        {/* Vehicle Dispatch Runs List */}
+        <div className="space-y-4">
+          <div className="flex justify-between items-center">
+            <h2 className="text-sm font-bold uppercase tracking-wider text-slate-700">
+              Active Vehicle Dispatch Sheets ({runs.length})
+            </h2>
+            <button
+              onClick={fetchRuns}
+              className="px-3 py-1.5 bg-white border border-slate-200 rounded-lg text-xs font-medium text-slate-600 hover:bg-slate-50 flex items-center gap-1.5"
+            >
+              <RefreshCw className="w-3.5 h-3.5" /> Refresh Status
+            </button>
+          </div>
 
-            <div className="flex items-center gap-2 w-full sm:w-auto">
-              <select
-                value={statusFilter}
-                onChange={(e) => setStatusFilter(e.target.value)}
-                className="px-3 py-1.5 border border-slate-200 rounded-lg text-xs bg-white text-slate-700 focus:outline-none"
-              >
-                <option value="">All Statuses</option>
-                <option value="DISPATCHED">In Transit (Dispatched)</option>
-                <option value="DELIVERED">Delivered</option>
-                <option value="DISCREPANCY">Discrepancy</option>
-              </select>
-
-              <button
-                onClick={fetchDeliveries}
-                className="p-1.5 border border-slate-200 rounded-lg text-slate-500 hover:bg-slate-50 transition"
-                title="Refresh Table"
-              >
-                <RefreshCw className="w-4 h-4" />
-              </button>
+          {loading ? (
+            <div className="bg-white p-12 rounded-2xl border text-center text-slate-400 text-sm">
+              Loading vehicle dispatch runs...
             </div>
-          </div>
+          ) : runs.length === 0 ? (
+            <div className="bg-white p-12 rounded-2xl border text-center space-y-3">
+              <Truck className="w-10 h-10 text-slate-300 mx-auto" />
+              <p className="text-sm text-slate-500">No vehicle dispatch sheets created yet.</p>
+              <Link
+                href="/runs/new"
+                className="inline-flex items-center gap-1.5 px-4 py-2 bg-teal-600 text-white rounded-xl text-xs font-bold"
+              >
+                <Plus className="w-4 h-4" /> Scan First Vehicle Sheet
+              </Link>
+            </div>
+          ) : (
+            runs.map((run) => {
+              const doneCount = run.deliveries.filter(
+                (d) => d.status === 'DELIVERED' || d.status === 'DISCREPANCY'
+              ).length;
 
-          <div className="overflow-x-auto">
-            <table className="w-full text-left border-collapse text-xs">
-              <thead>
-                <tr className="bg-slate-50 text-slate-600 border-b border-slate-200">
-                  <th className="py-3 px-4 font-semibold">Invoice No</th>
-                  <th className="py-3 px-4 font-semibold">Job No</th>
-                  <th className="py-3 px-4 font-semibold">Customer / Outlet</th>
-                  <th className="py-3 px-4 font-semibold">Driver</th>
-                  <th className="py-3 px-4 font-semibold">Status</th>
-                  <th className="py-3 px-4 font-semibold">Recipient Info</th>
-                  <th className="py-3 px-4 font-semibold text-center">Actions</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-100">
-                {loading ? (
-                  <tr>
-                    <td colSpan={7} className="py-8 text-center text-slate-400">Loading dispatches...</td>
-                  </tr>
-                ) : deliveries.length === 0 ? (
-                  <tr>
-                    <td colSpan={7} className="py-8 text-center text-slate-400">
-                      No delivery orders found. Click "+ New Dispatch" to create one.
-                    </td>
-                  </tr>
-                ) : (
-                  deliveries.map((d) => (
-                    <tr key={d.id} className="hover:bg-slate-50 transition">
-                      <td className="py-3 px-4 font-mono font-bold text-slate-900">{d.invoiceNumber}</td>
-                      <td className="py-3 px-4 font-mono text-slate-600">{d.jobNumber}</td>
-                      <td className="py-3 px-4">
-                        <div className="font-semibold text-slate-800">{d.customerName}</div>
-                        {d.customerPhone && <div className="text-[11px] text-slate-400">{d.customerPhone}</div>}
-                      </td>
-                      <td className="py-3 px-4 text-slate-700 font-medium">
-                        {d.driverName || <span className="text-slate-400 italic">Unassigned</span>}
-                      </td>
-                      <td className="py-3 px-4">
-                        {d.status === 'DELIVERED' && (
-                          <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200">
-                            Delivered
+              return (
+                <div key={run.id} className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
+                  <div className="bg-slate-900 text-white p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                    <div className="flex items-center gap-3">
+                      <span className="px-2.5 py-1 rounded-lg bg-teal-500/20 text-teal-300 border border-teal-500/30 font-mono text-xs font-bold">
+                        {run.vehicleNumber}
+                      </span>
+                      <div>
+                        <h3 className="text-sm font-bold">
+                          Driver: {run.driverName}{' '}
+                          <span className="text-slate-400 font-normal">
+                            • {run.routeName || 'Standard Route'}
                           </span>
-                        )}
-                        {d.status === 'DISCREPANCY' && (
-                          <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold bg-rose-50 text-rose-700 border border-rose-200">
-                            Discrepancy
-                          </span>
-                        )}
-                        {d.status === 'DISPATCHED' && (
-                          <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold bg-amber-50 text-amber-700 border border-amber-200">
-                            In Transit
-                          </span>
-                        )}
-                      </td>
-                      <td className="py-3 px-4">
-                        {d.acknowledgement ? (
-                          <div>
-                            <div className="font-medium text-slate-800">{d.acknowledgement.receiverName}</div>
-                            <div className="text-[10px] font-mono text-slate-400">NIC: {d.acknowledgement.receiverNic}</div>
-                          </div>
-                        ) : (
-                          <span className="text-slate-400 italic">Pending delivery</span>
-                        )}
-                      </td>
-                      <td className="py-3 px-4 text-center">
-                        <div className="flex items-center justify-center gap-1.5">
-                          <button
-                            onClick={() => copyDriverLink(d.id)}
-                            className="p-1.5 border border-slate-200 rounded-lg hover:bg-slate-100 text-slate-600 transition"
-                            title="Copy Driver Confirmation Web Link"
-                          >
-                            <Copy className="w-3.5 h-3.5" />
-                          </button>
+                        </h3>
+                        <p className="text-[11px] text-slate-400">
+                          Date: {new Date(run.deliveryDate).toLocaleDateString('en-GB')} • Progress: {doneCount}/
+                          {run.deliveries.length} Outlets
+                        </p>
+                      </div>
+                    </div>
 
-                          <Link
-                            href={`/pod/${d.id}`}
-                            target="_blank"
-                            className="p-1.5 border border-slate-200 rounded-lg hover:bg-slate-100 text-teal-600 transition"
-                            title="Open Driver Mobile Screen"
-                          >
-                            <ExternalLink className="w-3.5 h-3.5" />
-                          </Link>
+                    <div className="flex items-center gap-2">
+                      <button
+                        onClick={() => copyDriverRunLink(run.id)}
+                        className="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-xs font-semibold rounded-lg border border-slate-700 flex items-center gap-1.5 transition"
+                      >
+                        <Copy className="w-3.5 h-3.5 text-teal-400" />
+                        {copiedId === run.id ? 'Driver Link Copied!' : 'Copy Driver Link'}
+                      </button>
 
-                          {d.acknowledgement ? (
-                            <a
-                              href={`/api/pod/${d.id}/pdf`}
-                              target="_blank"
-                              className="px-2 py-1 bg-slate-900 text-white rounded text-[11px] font-medium hover:bg-slate-800 transition flex items-center gap-1"
-                              title="Download Signed e-POD Receipt"
-                            >
-                              <FileText className="w-3 h-3 text-teal-400" /> PDF
-                            </a>
-                          ) : (
-                            <span className="text-slate-300 text-[10px] italic">Not signed</span>
-                          )}
+                      <Link
+                        href={`/driver/${run.id}`}
+                        target="_blank"
+                        className="px-3 py-1.5 bg-teal-600 hover:bg-teal-500 text-white text-xs font-bold rounded-lg flex items-center gap-1 transition"
+                      >
+                        <ExternalLink className="w-3.5 h-3.5" /> Open Driver View
+                      </Link>
 
-                          {/* Delete Order Button */}
-                          <button
-                            onClick={() => handleDeleteDelivery(d.id, d.invoiceNumber)}
-                            className="p-1.5 border border-slate-200 rounded-lg hover:bg-rose-50 text-slate-400 hover:text-rose-600 transition ml-1"
-                            title="Delete Delivery Order"
-                          >
-                            <Trash2 className="w-3.5 h-3.5" />
-                          </button>
-                        </div>
-                        {copiedId === d.id && (
-                          <div className="text-[10px] text-emerald-600 font-medium mt-0.5">Link Copied!</div>
-                        )}
-                      </td>
-                    </tr>
-                  ))
-                )}
-              </tbody>
-            </table>
-          </div>
+                      <button
+                        onClick={() => handleDeleteRun(run.id, run.vehicleNumber)}
+                        className="p-1.5 text-slate-400 hover:text-rose-400 transition"
+                        title="Delete Run"
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Stops Table */}
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-left border-collapse text-xs">
+                      <thead>
+                        <tr className="bg-slate-50 text-slate-600 border-b">
+                          <th className="py-2.5 px-4 w-12">#</th>
+                          <th className="py-2.5 px-4">Invoice No</th>
+                          <th className="py-2.5 px-4">Customer / Outlet Name</th>
+                          <th className="py-2.5 px-4">Products Summary</th>
+                          <th className="py-2.5 px-4">Status</th>
+                          <th className="py-2.5 px-4 text-center">Invoice & Products</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-100">
+                        {run.deliveries.map((d) => (
+                          <tr key={d.id} className="hover:bg-slate-50">
+                            <td className="py-2.5 px-4 font-mono font-bold text-slate-400">{d.stopOrder}</td>
+                            <td className="py-2.5 px-4 font-mono font-bold text-slate-900">{d.invoiceNumber}</td>
+                            <td className="py-2.5 px-4 font-semibold text-slate-800">{d.customerName}</td>
+                            <td className="py-2.5 px-4">
+                              {d.items && d.items.length > 0 ? (
+                                <span className="font-medium text-slate-700">
+                                  {d.items.length} Products Recorded
+                                </span>
+                              ) : (
+                                <span className="text-slate-400 italic">Pending scan</span>
+                              )}
+                            </td>
+                            <td className="py-2.5 px-4">
+                              {d.status === 'DELIVERED' && (
+                                <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200">
+                                  ✓ Full Complete
+                                </span>
+                              )}
+                              {d.status === 'DISCREPANCY' && (
+                                <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-rose-50 text-rose-700 border border-rose-200">
+                                  ⚠ Shortage / Damage
+                                </span>
+                              )}
+                              {(d.status === 'DISPATCHED' || d.status === 'PENDING') && (
+                                <span className="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-amber-50 text-amber-700 border border-amber-200">
+                                  In Transit
+                                </span>
+                              )}
+                            </td>
+                            <td className="py-2.5 px-4 text-center">
+                              {d.signedInvoicePhotoUrl ? (
+                                <button
+                                  onClick={() => setPreviewInvoice(d)}
+                                  className="inline-flex items-center gap-1 px-2.5 py-1 bg-teal-50 text-teal-700 border border-teal-200 rounded-lg font-bold text-[11px] hover:bg-teal-100 transition"
+                                >
+                                  <Eye className="w-3.5 h-3.5" /> View Invoice & Products ({d.items?.length || 0})
+                                </button>
+                              ) : (
+                                <span className="text-[11px] text-slate-300">Awaiting Driver Upload</span>
+                              )}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              );
+            })
+          )}
         </div>
       </div>
+
+      {/* Modal: View Uploaded Signed Tax Invoice Photo + Extracted Products Table */}
+      {previewInvoice && (
+        <div className="fixed inset-0 z-50 bg-black/75 flex items-center justify-center p-4">
+          <div className="bg-white rounded-3xl max-w-5xl w-full p-6 space-y-5 shadow-2xl max-h-[92vh] overflow-y-auto">
+            <div className="flex justify-between items-center border-b pb-3">
+              <div>
+                <h3 className="font-bold text-slate-900 text-base">
+                  Invoice {previewInvoice.invoiceNumber} • {previewInvoice.customerName}
+                </h3>
+                <p className="text-xs text-slate-500">
+                  Receiver: {previewInvoice.receiverName || 'Outlet Staff'} • Delivered:{' '}
+                  {previewInvoice.deliveredAt && new Date(previewInvoice.deliveredAt).toLocaleString('en-GB')}
+                </p>
+              </div>
+              <button
+                onClick={() => setPreviewInvoice(null)}
+                className="p-1.5 rounded-full bg-slate-100 text-slate-600 hover:text-slate-900"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
+              {/* Left: Signed Tax Invoice Image */}
+              <div className="lg:col-span-5 bg-slate-900 rounded-2xl p-2">
+                {previewInvoice.signedInvoicePhotoUrl && (
+                  <img
+                    src={previewInvoice.signedInvoicePhotoUrl}
+                    alt="Signed Tax Invoice"
+                    className="max-h-[65vh] mx-auto object-contain rounded-xl"
+                  />
+                )}
+              </div>
+
+              {/* Right: Scanned Products & Quantities Breakdown */}
+              <div className="lg:col-span-7 space-y-3">
+                <h4 className="text-xs font-bold uppercase tracking-wider text-slate-700">
+                  Invoice Products & Delivery Verification ({previewInvoice.items?.length || 0} Items)
+                </h4>
+
+                <div className="overflow-x-auto border rounded-xl">
+                  <table className="w-full text-left border-collapse text-xs">
+                    <thead>
+                      <tr className="bg-slate-50 text-slate-600 border-b">
+                        <th className="py-2 px-3">SKU</th>
+                        <th className="py-2 px-3">Product Name</th>
+                        <th className="py-2 px-3 text-right">Invoiced</th>
+                        <th className="py-2 px-3 text-right">Delivered</th>
+                        <th className="py-2 px-3 text-center">Status / Notes</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y">
+                      {previewInvoice.items?.map((item) => {
+                        const isFull = item.shortageQty === 0 && item.damageQty === 0;
+                        return (
+                          <tr key={item.id}>
+                            <td className="py-2 px-3 font-mono text-teal-700 font-semibold">
+                              {item.productCode || '-'}
+                            </td>
+                            <td className="py-2 px-3 font-medium text-slate-900">{item.productName}</td>
+                            <td className="py-2 px-3 text-right font-mono">{item.orderedQty}</td>
+                            <td className="py-2 px-3 text-right font-mono font-bold">
+                              {item.receivedQty ?? item.orderedQty}
+                            </td>
+                            <td className="py-2 px-3 text-center">
+                              {isFull ? (
+                                <span className="px-2 py-0.5 rounded bg-emerald-50 text-emerald-700 font-bold text-[10px]">
+                                  ✓ Full Complete
+                                </span>
+                              ) : (
+                                <div className="text-[10px] text-rose-700 font-bold">
+                                  <span>
+                                    Short: {item.shortageQty} | Dmg: {item.damageQty}
+                                  </span>
+                                  {item.discrepancyReason && (
+                                    <div className="text-slate-500 font-normal">{item.discrepancyReason}</div>
+                                  )}
+                                </div>
+                              )}
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+
+                {previewInvoice.remarks && (
+                  <div className="p-3 bg-slate-50 rounded-xl text-xs text-slate-700 border">
+                    <strong>Driver Remarks:</strong> {previewInvoice.remarks}
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
