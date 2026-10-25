@@ -18,6 +18,7 @@ import {
   Plus,
   Trash2,
   PackageCheck,
+  Phone,
 } from 'lucide-react';
 
 interface ScannedProductItem {
@@ -77,6 +78,7 @@ function DriverRunContent() {
   const [scanningInvoice, setScanningInvoice] = useState(false);
   const [scanMessage, setScanMessage] = useState<string | null>(null);
   const [productItems, setProductItems] = useState<ScannedProductItem[]>([]);
+  const [customerPhone, setCustomerPhone] = useState('');
   const [receiverName, setReceiverName] = useState('');
   const [remarks, setRemarks] = useState('');
   const [submitting, setSubmitting] = useState(false);
@@ -103,6 +105,7 @@ function DriverRunContent() {
   const handleOpenStop = (stop: DeliveryStop) => {
     setActiveStop(stop);
     setPhotoPreview(stop.signedInvoicePhotoUrl || null);
+    setCustomerPhone(stop.customerPhone || '');
     setReceiverName(stop.receiverName || '');
     setRemarks(stop.remarks || '');
     setError(null);
@@ -129,7 +132,7 @@ function DriverRunContent() {
     }
   };
 
-  // Auto-Scan Tax Invoice Photo with AI to Extract Products & Quantities
+  // Auto-Scan Tax Invoice Photo with AI to Extract Products, Quantities & Phone
   const scanTaxInvoiceWithAI = async (compressedDataUrl: string) => {
     setScanningInvoice(true);
     setError(null);
@@ -143,22 +146,28 @@ function DriverRunContent() {
       });
 
       const result = await res.json();
-      if (res.ok && result.data && Array.isArray(result.data.items)) {
-        const extracted: ScannedProductItem[] = result.data.items.map((item: any) => {
-          const qty = Number(item.orderedQty) || 1;
-          return {
-            productCode: String(item.productCode || '').trim(),
-            productName: String(item.productName || '').trim(),
-            orderedQty: qty,
-            receivedQty: qty,
-            shortageQty: 0,
-            damageQty: 0,
-            discrepancyReason: '',
-            isFullComplete: true,
-          };
-        });
-        setProductItems(extracted);
-        setScanMessage(`AI extracted ${extracted.length} products from the Tax Invoice!`);
+      if (res.ok && result.data) {
+        const d = result.data;
+        if (d.customerPhone && !customerPhone) {
+          setCustomerPhone(String(d.customerPhone).trim());
+        }
+        if (Array.isArray(d.items)) {
+          const extracted: ScannedProductItem[] = d.items.map((item: any) => {
+            const qty = Number(item.orderedQty) || 1;
+            return {
+              productCode: String(item.productCode || '').trim(),
+              productName: String(item.productName || '').trim(),
+              orderedQty: qty,
+              receivedQty: qty,
+              shortageQty: 0,
+              damageQty: 0,
+              discrepancyReason: '',
+              isFullComplete: true,
+            };
+          });
+          setProductItems(extracted);
+          setScanMessage(`AI extracted ${extracted.length} products from the Tax Invoice!`);
+        }
       } else {
         setError(
           result.error ||
@@ -175,7 +184,6 @@ function DriverRunContent() {
     }
   };
 
-  // Compress & Trigger AI Scan on Image Capture/Upload
   const handleCaptureInvoicePhoto = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -270,6 +278,7 @@ function DriverRunContent() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           signedInvoicePhotoUrl: photoPreview,
+          customerPhone,
           receiverName,
           remarks,
           items: productItems,
@@ -317,7 +326,6 @@ function DriverRunContent() {
 
   return (
     <div className="min-h-screen bg-slate-100 text-slate-900 pb-12">
-      {/* Top Sticky Driver Header */}
       <header className="bg-slate-900 text-white p-4 sticky top-0 z-30 shadow-md">
         <div className="max-w-4xl mx-auto flex items-center justify-between">
           <div className="flex items-center gap-3">
@@ -344,7 +352,6 @@ function DriverRunContent() {
       </header>
 
       <main className="max-w-4xl mx-auto p-4 space-y-4">
-        {/* Progress Card */}
         <div className="bg-white rounded-2xl p-4 shadow-sm border border-slate-200 space-y-2">
           <div className="flex justify-between text-xs font-semibold text-slate-700">
             <span>Route Completion Progress</span>
@@ -358,7 +365,6 @@ function DriverRunContent() {
           </div>
         </div>
 
-        {/* Outlets List */}
         <div className="space-y-2.5">
           <h2 className="text-xs font-bold uppercase tracking-wider text-slate-500 px-1">
             Assigned Outlet Stops (Tap outlet to scan signed Tax Invoice)
@@ -428,7 +434,7 @@ function DriverRunContent() {
         </div>
       </main>
 
-      {/* Modal: Capture Signed Tax Invoice + AI Product Auto-Fill + Shortage/Damage Marking */}
+      {/* Modal: Capture Signed Tax Invoice + AI Product Auto-Fill + Custom Outlet Phone */}
       {activeStop && (
         <div className="fixed inset-0 z-50 bg-black/70 flex items-end sm:items-center justify-center p-0 sm:p-4">
           <div className="bg-white rounded-t-3xl sm:rounded-3xl max-w-3xl w-full max-h-[94vh] overflow-y-auto p-5 sm:p-6 space-y-5 shadow-2xl">
@@ -593,7 +599,6 @@ function DriverRunContent() {
                           </div>
                         </div>
 
-                        {/* Status Toggle per Item: Full Complete vs Shortage/Damage */}
                         <div className="flex flex-wrap items-center gap-2 pt-1">
                           <button
                             type="button"
@@ -620,7 +625,6 @@ function DriverRunContent() {
                           </button>
                         </div>
 
-                        {/* Expanded Discrepancy Fields when Shortage / Damaged is selected */}
                         {!item.isFullComplete && (
                           <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5 pt-2 border-t border-amber-200/80">
                             <div>
@@ -679,8 +683,21 @@ function DriverRunContent() {
                 )}
               </div>
 
-              {/* Step 3: Receiver Name & Remarks */}
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 border-t pt-4">
+              {/* Step 3: Outlet Mobile Phone (For Confirmation SMS), Receiver Name & Remarks */}
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 border-t pt-4">
+                <div>
+                  <label className="block text-xs font-bold text-teal-700 mb-1 flex items-center gap-1">
+                    <Phone className="w-3.5 h-3.5" /> Outlet Phone (For Confirmation SMS)
+                  </label>
+                  <input
+                    type="tel"
+                    placeholder="Enter shop mobile e.g. 0771234567"
+                    value={customerPhone}
+                    onChange={(e) => setCustomerPhone(e.target.value)}
+                    className="w-full px-3 py-2 border border-teal-300 rounded-xl text-xs font-mono focus:ring-2 focus:ring-teal-500"
+                  />
+                </div>
+
                 <div>
                   <label className="block text-xs font-semibold text-slate-600 mb-1">
                     Receiver Name / Outlet Person
@@ -693,6 +710,7 @@ function DriverRunContent() {
                     className="w-full px-3 py-2 border rounded-xl text-xs"
                   />
                 </div>
+
                 <div>
                   <label className="block text-xs font-semibold text-slate-600 mb-1">
                     General Delivery Remarks
@@ -713,7 +731,7 @@ function DriverRunContent() {
                 className="w-full py-3.5 bg-teal-600 text-white rounded-xl font-bold text-sm hover:bg-teal-700 disabled:opacity-50 transition flex items-center justify-center gap-2 shadow-md"
               >
                 <UploadCloud className="w-4 h-4" />
-                {submitting ? 'Saving Invoice & Products...' : 'Confirm Delivery & Save Products'}
+                {submitting ? 'Confirming & Sending SMS...' : 'Confirm Delivery & Send SMS'}
               </button>
             </form>
           </div>

@@ -35,7 +35,7 @@ export async function POST(
   try {
     const { id } = await context.params;
     const body = await req.json();
-    const { signedInvoicePhotoUrl, receiverName, receiverNic, remarks, items } = body;
+    const { signedInvoicePhotoUrl, receiverName, receiverNic, customerPhone, remarks, items } = body;
 
     if (!signedInvoicePhotoUrl) {
       return NextResponse.json(
@@ -52,6 +52,10 @@ export async function POST(
     if (!existing) {
       return NextResponse.json({ error: 'Delivery order not found.' }, { status: 404 });
     }
+
+    const finalCustomerPhone = customerPhone
+      ? String(customerPhone).trim()
+      : existing.customerPhone;
 
     // Check if any item has shortage or damage
     let hasDiscrepancy = false;
@@ -90,7 +94,20 @@ export async function POST(
       });
     }
 
-    // 2. Save Delivery Confirmation and Replace Delivery Items in a Transaction
+    // 2. Sync customer phone to Master Customer table if entered/updated
+    if (finalCustomerPhone) {
+      const existingCustomer = await db.customer.findFirst({
+        where: { name: existing.customerName },
+      });
+      if (existingCustomer) {
+        await db.customer.update({
+          where: { id: existingCustomer.id },
+          data: { phone: finalCustomerPhone },
+        });
+      }
+    }
+
+    // 3. Save Delivery Confirmation and Items
     const updated = await db.$transaction(async (tx) => {
       await tx.deliveryItem.deleteMany({ where: { deliveryId: id } });
 
@@ -98,6 +115,7 @@ export async function POST(
         where: { id },
         data: {
           signedInvoicePhotoUrl,
+          customerPhone: finalCustomerPhone || null,
           receiverName: receiverName ? receiverName.trim() : 'Outlet Representative',
           receiverNic: receiverNic ? receiverNic.trim().toUpperCase() : null,
           remarks: remarks ? remarks.trim() : null,
@@ -132,26 +150,27 @@ export async function POST(
       return deliv;
     });
 
-    // 3. Send SMS Alert to Admin & Outlet
+    // 4. Send SMS Notification to Outlet (Customer) & Admin
+    const statusLabel = hasDiscrepancy ? 'WITH SHORTAGE/DAMAGE' : 'IN FULL GOOD CONDITION';
     const adminPhone = process.env.ADMIN_ALERT_PHONE;
-    const statusLabel = hasDiscrepancy ? 'WITH SHORTAGE/DAMAGE' : 'FULL COMPLETE';
-    const smsText = `e-POD Alert: Invoice ${existing.invoiceNumber} (${existing.customerName}) delivered [${statusLabel}] by ${
-      existing.dispatchRun?.driverName || 'Driver'
-    }. Items recorded: ${validItems.length}.`;
+
+    if (finalCustomerPhone) {
+      const customerSms = `Delivery is Confirmed! Invoice ${existing.invoiceNumber} for ${existing.customerName} (${validItems.length} items - ${statusLabel}) has been delivered and acknowledged. Thank you!`;
+      await sendSmsNotification({ to: finalCustomerPhone, message: customerSms });
+    }
 
     if (adminPhone) {
-      await sendSmsNotification({ to: adminPhone, message: smsText });
-    }
-    if (existing.customerPhone) {
-      await sendSmsNotification({
-        to: existing.customerPhone,
-        message: `George Steuart Delivery Confirmed: Invoice ${existing.invoiceNumber} (${validItems.length} items - ${statusLabel}) received at ${existing.customerName}.`,
-      });
+      const adminSms = `e-POD Alert: Invoice ${existing.invoiceNumber} (${existing.customerName}) delivered [${statusLabel}] by ${
+        existing.dispatchRun?.driverName || 'Driver'
+      }.`;
+      await sendSmsNotification({ to: adminPhone, message: adminSms });
     }
 
     return NextResponse.json({
       success: true,
-      message: 'Signed invoice & product quantities saved successfully.',
+      message: finalCustomerPhone
+        ? `Delivery confirmed and SMS sent to ${finalCustomerPhone}!`
+        : 'Delivery confirmed and saved successfully!',
       delivery: updated,
     });
   } catch (error: any) {

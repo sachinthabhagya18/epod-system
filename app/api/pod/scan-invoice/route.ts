@@ -28,7 +28,8 @@ export async function POST(req: NextRequest) {
       Analyze this Tax Invoice image and extract:
       1. invoiceNumber: The Tax Invoice No (e.g. "26OCT_GSC_131896" or "26OCT_GSC_132165").
       2. customerName: The Customer's Name (e.g. "SOUTH ASIAN TECHNOLOGIES (PVT) LTD" or "SANIKMO SUPER").
-      3. items: Every product row in the invoice table:
+      3. customerPhone: The Customer's Phone / Tel number if visible on the invoice (e.g. "011-755509" or "0771234567"). If not found, return "".
+      4. items: Every product row in the invoice table:
          - productCode: The Item code / SKU column (e.g. "PK1206_RS2800", "500104").
          - productName: The Description of Goods or Services column (e.g. "LS - STEUARTS BOPF PACK 1KG").
          - orderedQty: The Quantity column as an integer number (e.g. 5, 24, 100).
@@ -37,6 +38,7 @@ export async function POST(req: NextRequest) {
       {
         "invoiceNumber": "26OCT_GSC_131896",
         "customerName": "SANIKMO SUPER",
+        "customerPhone": "0771234567",
         "items": [
           { "productCode": "PK1206_RS2800", "productName": "LS - STEUARTS BOPF PACK 1KG", "orderedQty": 5 }
         ]

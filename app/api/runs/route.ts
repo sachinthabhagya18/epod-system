@@ -1,6 +1,7 @@
 // app/api/runs/route.ts
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
+import { sendSmsNotification } from '@/lib/sms';
 
 export async function GET(req: NextRequest) {
   try {
@@ -31,7 +32,7 @@ export async function GET(req: NextRequest) {
         },
       },
       orderBy: { createdAt: 'desc' },
-      take: 50,
+      take: 100,
     });
 
     return NextResponse.json(runs);
@@ -55,6 +56,7 @@ export async function POST(req: NextRequest) {
 
     const cleanDriverName = driverName.trim().toUpperCase();
     const cleanVehicle = vehicleNumber.trim().toUpperCase();
+    const cleanDriverPhone = driverPhone ? driverPhone.trim() : null;
 
     // 1. Auto-Save / Sync Driver into Master Driver Table
     const existingDriver = await db.driver.findFirst({
@@ -64,14 +66,17 @@ export async function POST(req: NextRequest) {
       await db.driver.create({
         data: {
           name: cleanDriverName,
-          phone: driverPhone ? driverPhone.trim() : 'N/A',
+          phone: cleanDriverPhone || 'N/A',
           vehicleNumber: cleanVehicle,
         },
       });
-    } else if (cleanVehicle && existingDriver.vehicleNumber !== cleanVehicle) {
+    } else {
       await db.driver.update({
         where: { id: existingDriver.id },
-        data: { vehicleNumber: cleanVehicle },
+        data: {
+          vehicleNumber: cleanVehicle || existingDriver.vehicleNumber,
+          phone: cleanDriverPhone || existingDriver.phone,
+        },
       });
     }
 
@@ -89,6 +94,11 @@ export async function POST(req: NextRequest) {
               phone: s.customerPhone ? String(s.customerPhone).trim() : null,
             },
           });
+        } else if (s.customerPhone && !existingCustomer.phone) {
+          await db.customer.update({
+            where: { id: existingCustomer.id },
+            data: { phone: String(s.customerPhone).trim() },
+          });
         }
       }
     }
@@ -102,7 +112,7 @@ export async function POST(req: NextRequest) {
         deliveryDate: deliveryDate ? new Date(deliveryDate) : new Date(),
         vehicleNumber: cleanVehicle,
         driverName: cleanDriverName,
-        driverPhone: driverPhone ? driverPhone.trim() : null,
+        driverPhone: cleanDriverPhone,
         routeName: routeName ? routeName.trim().toUpperCase() : null,
         deliveries: {
           create: stops.map((s: any, idx: number) => ({
@@ -120,10 +130,20 @@ export async function POST(req: NextRequest) {
       },
     });
 
+    // 4. Send Route Link via SMS to the Driver if driverPhone is provided
+    const baseUrl = process.env.NEXT_PUBLIC_APP_URL || req.nextUrl.origin;
+    const driverRouteUrl = `${baseUrl}/driver/${createdRun.id}`;
+
+    if (cleanDriverPhone) {
+      const driverSms = `Steuart Dispatch Assigned: Vehicle ${cleanVehicle} (${stops.length} Outlets). Open your daily delivery route link here: ${driverRouteUrl}`;
+      await sendSmsNotification({ to: cleanDriverPhone, message: driverSms });
+    }
+
     return NextResponse.json({
       success: true,
-      message: 'Dispatch route created and master tables synced.',
+      message: 'Dispatch route created and SMS sent to driver.',
       run: createdRun,
+      driverRouteUrl,
     });
   } catch (error: any) {
     console.error('Create Run Error:', error);
